@@ -164,7 +164,7 @@ export const HELP = [
 export const BUBBLES: Record<LavaBubbles, { count: number; size: number; pace: number }> = {
   few: { count: 3, size: 1.7, pace: 1.3 },
   medium: { count: 5, size: 1, pace: 1 },
-  many: { count: 9, size: 0.62, pace: 0.82 },
+  many: { count: 9, size: 0.62, pace: 0.9 },
 }
 
 const bubblesOf = (b: LavaBubbles | undefined) => BUBBLES[b ?? 'medium'] ?? BUBBLES.medium
@@ -245,23 +245,26 @@ const ROLL = 0.08 // 1/s: how firmly cooled wax settles toward its own side of t
 // the bulb heats wax near the base, the top cools it. Each blob trades heat with
 // the liquid slowly, scaled down by its size (a big blob has more to warm).
 const liquidTemp = (v: number, t: number) => 0.28 + 0.3 * v + 0.03 * Math.sin(t * 0.035 + 4 * v)
-const FLICKER = 0.03 // 1/s: the seeded wobble in each blob's heat, so no two cycles repeat
+const FLICKER = 0.05 // 1/s: the seeded wobble in each blob's heat, so no two cycles repeat
 const K_LIQUID = 0.03 // 1/s
 const K_BULB = 0.12 // 1/s, at full strength under the hot spot
 const K_TOP = 0.1 // 1/s
 const BULB_FROM = 0.7 // the bulb's reach: none above this depth, full below BULB_TO
 const BULB_TO = 0.92
-const TOP_FROM = 0.4 // the top's chill: full above TOP_TO, none below this depth
-const TOP_TO = 0.1
+const TOP_FROM = 0.22 // the top's chill: full above TOP_TO, none below this depth
+const TOP_TO = 0.04
 
 // Blob against blob. `s` is the centre distance over the sum of the radii, so
 // s = 1 is rims touching. Everything fades to nothing at RANGE ("a few radii").
 const RANGE = 2.4
 const ENTRAIN = 0.4 // 1/s: pull of a neighbour's velocity on a blob's own
+// Entrainment reaches less far than cling: a blob passing close drags its neighbour, while blobs
+// merely nearby keep their own rhythm instead of locking into step.
+const ENTRAIN_RANGE = 1.6
 const CLING = 0.012 // peak attraction between wax and wax
 const CORE = 0.6 // soft repulsion, at its strongest when two blobs' centres coincide
 const CORE_S = 1.5 // inside this separation (in the sum of their radii) it pushes apart, beyond it wax clings
-const HEAT_SHARE = 0.03 // 1/s: heat traded between blobs in touch
+const HEAT_SHARE = 0.01 // 1/s: heat traded between blobs in touch
 
 const WALL_SOFT = 0.05 // the soft boundary's depth
 const WALL_PUSH = 0.35 // its acceleration at the wall itself
@@ -292,7 +295,7 @@ function traits(b: Body) {
     thermal: Math.max(0.6, Math.sqrt(heft)) * (0.8 + 0.4 * hash(b.id, 16)),
     bulb: 0.5 + hash(b.id, 11),
     chill: 0.6 + 0.8 * hash(b.id, 17),
-    density: (hash(b.id, 12) - 0.5) * 0.12,
+    density: (hash(b.id, 12) - 0.5) * 0.2,
     flicker: FLICKER * (0.5 + hash(b.id, 18)),
     beat: 0.1 + 0.2 * hash(b.id, 19),
     side: hash(b.id, 20) < 0.5 ? -1 : 1,
@@ -400,12 +403,13 @@ export function step(sim: Sim, counted = true): void {
         const wa = (2 * own[j]!.weight) / (own[i]!.weight + own[j]!.weight)
         const wb = 2 - wa
         // Entrainment: each is pulled toward the other's velocity.
+        const grip = (1 - clamp((s - 1) / (ENTRAIN_RANGE - 1), 0, 1)) ** 2
         const dvx = b.vx - a.vx
         const dvy = b.vy - a.vy
-        ai.ax += ENTRAIN * near * dvx * wa
-        ai.ay += ENTRAIN * near * dvy * wa
-        aj.ax -= ENTRAIN * near * dvx * wb
-        aj.ay -= ENTRAIN * near * dvy * wb
+        ai.ax += ENTRAIN * grip * dvx * wa
+        ai.ay += ENTRAIN * grip * dvy * wa
+        aj.ax -= ENTRAIN * grip * dvx * wb
+        aj.ay -= ENTRAIN * grip * dvy * wb
         // Cling and core: along the line between centres, positive toward the other.
         const pull = s < CORE_S ? -CORE * (1 - s / CORE_S) ** 2 : CLING * Math.sin((Math.PI * (s - CORE_S)) / (RANGE - CORE_S))
         const ux = dx / d

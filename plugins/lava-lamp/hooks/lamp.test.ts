@@ -662,8 +662,10 @@ test('a new lamp is already settled: wax is spread through the glass, not all in
 const pairOfBlobs = (interact: boolean) =>
   simOf(
     [
-      { id: 1, x: -0.11, y: 0.55, vx: 0, vy: 0, T: 0.7, r: 0.1 },
-      { id: 2, x: 0.11, y: 0.5, vx: 0, vy: 0, T: 0.2, r: 0.1 },
+      // They pass each other mid-glass, so neither reaches the cap or the floor within the run:
+      // a blob pinned at the floor would look the same with or without its neighbour.
+      { id: 1, x: -0.11, y: 0.62, vx: 0, vy: 0, T: 0.7, r: 0.1 },
+      { id: 2, x: 0.11, y: 0.4, vx: 0, vy: 0, T: 0.2, r: 0.1 },
     ],
     { interact },
   )
@@ -825,4 +827,45 @@ test('a blob never sticks to a wall: pushed at one, it slides along it', async (
     expect(Math.abs(sim.bodies[0]!.x) <= canonicalHalf(true, sim.bodies[0]!.y) - 0.085 + 1e-9).toBe(true)
   }
   expect(moved > 0.02).toBe(true)
+})
+
+// How far up a blob's top edge gets before it turns back, and how in step blobs move.
+const rhythm = (bubbles: 'few' | 'medium' | 'many') => {
+  const sim = createSim({ bubbles })
+  const vys: number[][] = sim.bodies.map(() => [])
+  const prev = sim.bodies.map(b => b.vy)
+  const turns: number[] = []
+  for (let i = 0; i < 24000; i++) {
+    step(sim)
+    sim.bodies.forEach((b, k) => {
+      if (i % 8 === 0) vys[k]!.push(b.vy)
+      if (prev[k]! < -0.004 && b.vy >= 0) turns.push(b.y - b.r)
+      if (Math.abs(b.vy) > 0.004 || b.vy >= 0) prev[k] = b.vy
+    })
+  }
+  const corr = (a: number[], c: number[]) => {
+    const ma = a.reduce((s, x) => s + x, 0) / a.length
+    const mc = c.reduce((s, x) => s + x, 0) / c.length
+    let num = 0
+    let da = 0
+    let dc = 0
+    for (let i = 0; i < a.length; i++) {
+      num += (a[i]! - ma) * (c[i]! - mc)
+      da += (a[i]! - ma) ** 2
+      dc += (c[i]! - mc) ** 2
+    }
+    return num / Math.sqrt(da * dc)
+  }
+  const pairs: number[] = []
+  for (let i = 0; i < vys.length; i++) for (let j = i + 1; j < vys.length; j++) pairs.push(corr(vys[i]!, vys[j]!))
+  turns.sort((a, b) => a - b)
+  return { medianTurn: turns[Math.floor(turns.length / 2)]!, meanCorr: pairs.reduce((s, x) => s + x, 0) / pairs.length }
+}
+
+test('rising wax reaches up under the cap before it turns back', async () => {
+  expect(rhythm('medium').medianTurn < 0.12).toBe(true)
+})
+
+test('blobs keep their own rhythm instead of rising and sinking in step', async () => {
+  for (const bubbles of ['few', 'medium'] as const) expect(rhythm(bubbles).meanCorr < 0.5).toBe(true)
 })

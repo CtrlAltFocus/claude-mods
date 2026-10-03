@@ -1,6 +1,6 @@
 {
   "name": "lava-lamp",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "description": "An animated metaball lava lamp in a side pane, in real wax-in-liquid colours: /lava-lamp toggles it; /lava-lamp [veryslow|slow|normal|fast] [orange|yellow|green|purple|blue|pink|rotate] [<wax>-<liquid> pair, e.g. yellow-clear, white-red, orange-black] [few|medium|many bubbles] [lamp|nolamp] [off] sets it; a colour word means that colour's classic pair (e.g. orange = orange wax in violet), a -clear liquid lets the terminal background show, rotate cycles slowly through eight pairs, and rotate-clear rotates the wax over a clear liquid",
   "author": {
     "name": "CtrlAltFocus"

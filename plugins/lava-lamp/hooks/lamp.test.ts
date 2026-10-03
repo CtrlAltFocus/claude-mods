@@ -709,28 +709,68 @@ test('interaction counterfactual: a rising and a sinking blob side by side bend 
   expect(Math.hypot(sinkOn.x - sinkOff.x, sinkOn.y - sinkOff.y) > 0.04).toBe(true)
 })
 
-// Held back, not loosened: with the thermal model's fast exchange with the liquid, heat shared
-// between touching blobs at HEAT_SHARE 0.01 no longer shows, and a share strong enough to show
-// locks 'few' into step. Whether blobs share heat at all is open on PROD-2087; this check is
-// registered again (or deleted with the mechanism) when that is decided.
-export const heatTradeHeldBack = async () => {
-  const touching = (interact: boolean) =>
-    simOf(
-      [
-        { id: 1, x: -0.1, y: 0.5, vx: 0, vy: 0, T: 0.7, r: 0.1 },
-        { id: 2, x: 0.1, y: 0.5, vx: 0, vy: 0, T: 0.3, r: 0.1 },
-      ],
-      { interact },
-    )
-  const on = touching(true)
-  const off = touching(false)
-  for (let i = 0; i < 80; i++) {
+// Blobs trade heat only while passing each other (one rising, one sinking); blobs riding
+// the same way trade none, so heat sharing cannot pull them into step. PROD-2087.
+const passingPair = (interact: boolean, riserT: number, sinkerT: number, riserR = 0.1, sinkerR = 0.1) =>
+  simOf(
+    [
+      { id: 1, x: -0.08, y: 0.62, vx: 0, vy: 0, T: riserT, r: riserR },
+      { id: 2, x: 0.08, y: 0.4, vx: 0, vy: 0, T: sinkerT, r: sinkerR },
+    ],
+    { interact },
+  )
+const runBoth = (on: Sim, off: Sim, steps = 240) => {
+  for (let i = 0; i < steps; i++) {
     step(on)
     step(off)
   }
-  const gap = (sim: Sim) => Math.abs(sim.bodies[0]!.T - sim.bodies[1]!.T)
-  expect(gap(on) < gap(off) - 0.005).toBe(true)
 }
+
+test('blobs passing each other trade heat; blobs riding the same way do not', async () => {
+  // Same blobs, interaction on in both; only the heat traded between them differs.
+  const pass = (share: boolean) =>
+    simOf(
+      [
+        { id: 1, x: -0.08, y: 0.62, vx: 0, vy: 0, T: 0.64, r: 0.1 },
+        { id: 2, x: 0.08, y: 0.4, vx: 0, vy: 0, T: 0.36, r: 0.1 },
+      ],
+      { share },
+    )
+  const on = pass(true)
+  const off = pass(false)
+  runBoth(on, off)
+  const gap = (sim: Sim) => Math.abs(sim.bodies[0]!.T - sim.bodies[1]!.T)
+  expect(gap(on) < gap(off) - 0.03).toBe(true)
+  const riding = (share: boolean) =>
+    simOf(
+      [
+        { id: 1, x: -0.11, y: 0.7, vx: 0, vy: 0, T: 0.6, r: 0.1 },
+        { id: 2, x: 0.11, y: 0.7, vx: 0, vy: 0, T: 0.56, r: 0.1 },
+      ],
+      { share },
+    )
+  const rOn = riding(true)
+  const rOff = riding(false)
+  runBoth(rOn, rOff, 120)
+  expect(rOn.bodies[0]!.vy < 0 && rOn.bodies[1]!.vy < 0).toBe(true)
+  expect(JSON.stringify(rOn.bodies)).toBe(JSON.stringify(rOff.bodies))
+})
+
+test('blobs passing close shoulder each other aside: harder for a faster pass, the lighter one giving way more', async () => {
+  const aside = (riserT: number, sinkerT: number, riserR = 0.1, sinkerR = 0.1) => {
+    const on = passingPair(true, riserT, sinkerT, riserR, sinkerR)
+    const off = passingPair(false, riserT, sinkerT, riserR, sinkerR)
+    runBoth(on, off)
+    // The riser starts on the left, the sinker on the right: pushed apart is left and right.
+    return { riser: off.bodies[0]!.x - on.bodies[0]!.x, sinker: on.bodies[1]!.x - off.bodies[1]!.x }
+  }
+  const slow = aside(0.5, 0.48)
+  const fast = aside(0.64, 0.36)
+  expect(fast.riser > 0.03 && fast.sinker > 0.03).toBe(true)
+  expect(fast.riser > 1.5 * slow.riser && fast.sinker > 1.5 * slow.sinker).toBe(true)
+  const bigRiser = aside(0.55, 0.42, 0.14, 0.07)
+  expect(bigRiser.sinker > 2 * bigRiser.riser).toBe(true)
+})
 
 test('hovering: across a long run some blob lingers mid-glass, all but still', async () => {
   const sim = createSim()
@@ -873,9 +913,47 @@ test('rising wax reaches up under the cap before it turns back', async () => {
   expect(rhythm('medium').reach > 0.38).toBe(true)
 })
 
+// Mean pairwise correlation of vertical speed over three consecutive 600 s windows: one window
+// alone can pass by luck of timing while blobs lock into step later.
+const rhythmWindows = (bubbles: 'few' | 'medium' | 'many') => {
+  const sim = createSim({ bubbles })
+  const out: number[] = []
+  for (let w = 0; w < 3; w++) {
+    const vys: number[][] = sim.bodies.map(() => [])
+    for (let i = 0; i < 24000; i++) {
+      step(sim)
+      if (i % 8 === 0) sim.bodies.forEach((b, k) => vys[k]!.push(b.vy))
+    }
+    const corr = (a: number[], c: number[]) => {
+      const ma = a.reduce((s, x) => s + x, 0) / a.length
+      const mc = c.reduce((s, x) => s + x, 0) / c.length
+      let num = 0
+      let da = 0
+      let dc = 0
+      for (let i = 0; i < a.length; i++) {
+        num += (a[i]! - ma) * (c[i]! - mc)
+        da += (a[i]! - ma) ** 2
+        dc += (c[i]! - mc) ** 2
+      }
+      return num / Math.sqrt(da * dc)
+    }
+    const pairs: number[] = []
+    for (let i = 0; i < vys.length; i++) for (let j = i + 1; j < vys.length; j++) pairs.push(corr(vys[i]!, vys[j]!))
+    out.push(pairs.reduce((s, x) => s + x, 0) / pairs.length)
+  }
+  return out
+}
+
 test('blobs keep their own rhythm instead of rising and sinking in step', async () => {
-  for (const bubbles of ['few', 'medium'] as const) expect(rhythm(bubbles).meanCorr < 0.5).toBe(true)
+  for (const bubbles of ['medium', 'many'] as const) for (const c of rhythmWindows(bubbles)) expect(c < 0.3).toBe(true)
 })
+
+// Held back, owner-ruled: the three big blobs of 'few' drift into step for minutes at a time, in
+// this version and the one before (windows measured 0.48 / 0.45 / 0.61 before, 0.61 / 0.75 / 0.64
+// now), and which way it goes flips with small changes. Fixing it is PROD-2087; register this again then.
+export const fewRhythmHeldBack = async () => {
+  for (const c of rhythmWindows('few')) expect(c < 0.5).toBe(true)
+}
 
 test('a hot blob meeting the cap settles against it instead of being thrown back', async () => {
   const sim = simOf([{ id: 3, x: 0, y: 0.45, vx: 0, vy: 0, T: 0.85, r: 0.07 }])

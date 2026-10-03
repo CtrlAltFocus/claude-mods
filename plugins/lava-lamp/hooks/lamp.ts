@@ -280,11 +280,23 @@ const RANGE = 2.4
 const ENTRAIN = 0.4 // 1/s: pull of a neighbour's velocity on a blob's own
 // Entrainment reaches less far than cling: a blob passing close drags its neighbour, while blobs
 // merely nearby keep their own rhythm instead of locking into step.
-const ENTRAIN_RANGE = 1.6
+// Measured as the gap between the two rims, not as a multiple of their size: big blobs would
+// otherwise drag each other from across most of the glass and ride in step. ENTRAIN_GAP equals
+// what the old multiple gave two medium blobs, so those behave as before.
+const ENTRAIN_GAP = 0.12
 const CLING = 0.012 // peak attraction between wax and wax
 const CORE = 0.6 // soft repulsion, at its strongest when two blobs' centres coincide
 const CORE_S = 1.5 // inside this separation (in the sum of their radii) it pushes apart, beyond it wax clings
-const HEAT_SHARE = 0.01 // 1/s: heat traded between blobs in touch
+// Heat is traded only while two touching blobs pass each other, one rising and one sinking:
+// a pass is brief, so it cannot pull two blobs into step, and blobs riding together (which
+// would) trade none. Full strength once both move at PASS_SPEED or more.
+const HEAT_PASS = 0.6 // 1/s
+const PASS_SPEED = 0.02
+// Two blobs passing close, one rising and one sinking, shoulder each other aside: a sideways push
+// apart, growing with the square of how fast they pass (a faster pass nudges harder), the lighter one giving way more. Sideways damping
+// then eases them back, so a pass reads as a sidestep, not a drift. Reaches PASS_RANGE radii-sums.
+const PASS_PUSH = 0.25
+const PASS_RANGE = 1.8
 
 const WALL_SOFT = 0.05 // the soft boundary's depth
 const WALL_PUSH = 0.35 // its acceleration at the wall itself
@@ -297,12 +309,13 @@ export const FLOOR = 0.985 // the lowest a blob's centre may go: down in the poo
 // A blob: `id` seeds its private traits; (x, y) the centre, y down; T its temperature.
 export type Body = { id: number; x: number; y: number; vx: number; vy: number; T: number; r: number; shape?: number; afloat?: boolean }
 
-export type SimOptions = { bubbles?: LavaBubbles; lamp?: boolean; interact?: boolean }
+// `share: false` turns off only the heat traded between passing blobs (a test's counterfactual).
+export type SimOptions = { bubbles?: LavaBubbles; lamp?: boolean; interact?: boolean; share?: boolean }
 
 // The whole state of a lamp. `tick` counts every step ever taken (the physics'
 // own clock, warm-up included); `clock` counts steps of lamp time shown, which is
 // what `rotate` reads, and which a restarted lamp may carry over.
-export type Sim = { bubbles: LavaBubbles; lamp: boolean; interact: boolean; bodies: Body[]; tick: number; clock: number }
+export type Sim = { bubbles: LavaBubbles; lamp: boolean; interact: boolean; share?: boolean; bodies: Body[]; tick: number; clock: number }
 
 export const WARMUP_STEPS = 4200
 
@@ -342,7 +355,7 @@ function newBody(id: number, glassW: number, lamp: boolean, size: number): Body 
 
 // A lamp from explicit blobs (a test places them), not yet stepped.
 export function simOf(bodies: Body[], options: SimOptions = {}, clock = 0): Sim {
-  return { bubbles: options.bubbles ?? 'medium', lamp: options.lamp ?? true, interact: options.interact ?? true, bodies, tick: 0, clock }
+  return { bubbles: options.bubbles ?? 'medium', lamp: options.lamp ?? true, interact: options.interact ?? true, share: options.share ?? true, bodies, tick: 0, clock }
 }
 
 // The initial lamp for a seed: the options' blobs, then WARMUP_STEPS of settling,
@@ -435,7 +448,7 @@ export function step(sim: Sim, counted = true): void {
         const wa = (2 * own[j]!.weight) / (own[i]!.weight + own[j]!.weight)
         const wb = 2 - wa
         // Entrainment: each is pulled toward the other's velocity.
-        const grip = (1 - clamp((s - 1) / (ENTRAIN_RANGE - 1), 0, 1)) ** 2
+        const grip = (1 - clamp((d - a.r - b.r) / ENTRAIN_GAP, 0, 1)) ** 2
         const dvx = b.vx - a.vx
         const dvy = b.vy - a.vy
         ai.ax += ENTRAIN * grip * dvx * wa
@@ -450,8 +463,14 @@ export function step(sim: Sim, counted = true): void {
         ai.ay += pull * uy * wa
         aj.ax -= pull * ux * wb
         aj.ay -= pull * uy * wb
-        // Heat traded between blobs in touch.
-        const share = HEAT_SHARE * contact(s) * (b.T - a.T)
+        // Passing: opposite vertical motion. It trades heat and shoulders the two apart sideways.
+        const passing = ramp(-(a.vy * b.vy), 0, PASS_SPEED * PASS_SPEED)
+        const close = (1 - clamp((s - 1) / (PASS_RANGE - 1), 0, 1)) ** 2
+        const dvp = b.vy - a.vy
+        const nudge = PASS_PUSH * close * passing * ((dvp * dvp) / PASS_SPEED) * (dx < 0 ? -1 : 1)
+        ai.ax -= nudge * wa
+        aj.ax += nudge * wb
+        const share = sim.share === false ? 0 : HEAT_PASS * contact(s) * passing * (b.T - a.T)
         ai.dT += share * wa
         aj.dT -= share * wb
       }

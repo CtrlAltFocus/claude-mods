@@ -1,0 +1,14 @@
+{
+  "name": "ctrlaltfocus-mods",
+  "description": "Claude Code mods: panes and commands that live inside a session",
+  "owner": {
+    "name": "CtrlAltFocus"
+  },
+  "plugins": [
+    {
+      "name": "lava-lamp",
+      "source": "./plugins/lava-lamp",
+      "description": "An animated lava lamp in a side pane, in real wax-in-liquid colours, with blobs that heat, rise, cool, sink and nudge each other"
+    }
+  ]
+}

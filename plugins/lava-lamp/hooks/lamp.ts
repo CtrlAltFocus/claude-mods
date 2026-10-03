@@ -3,9 +3,11 @@
 // pixels per terminal cell), shaded, then packed into runs.
 //
 // The motion is simulated, not scripted. Each blob carries a position, a
-// velocity and a temperature. The bulb warms wax near the base and the top
-// cools it; warm wax is buoyant and rises, cooled wax sinks, and wax whose
-// temperature has settled near the liquid's hangs mid-glass. The liquid is thick
+// velocity, a temperature and whether it is afloat. Afloat wax rises until it has
+// cooled below T_LO; sinking wax sinks until it has warmed above T_HI. The liquid
+// stays between the two, so only the bulb (at the base) and the cap (at the top)
+// flip a blob: wax leaves the pool hot and fast and slows as it cools toward the
+// liquid, and leaves the cap cold and fast and slows as it warms. The liquid is thick
 // (strong drag), so everything is slow and smooth. Blobs also act on each other,
 // each force fading to nothing a few radii out: a moving blob drags a neighbour
 // toward its own velocity (entrainment), wax clings weakly to wax while a soft
@@ -240,9 +242,12 @@ export const canonicalHalf = (lamp: boolean, v: number) => (lamp ? WIDEST_LAMP *
 
 const R_REF = 0.1 // a medium blob's radius: the unit of weight and thermal mass
 const GAMMA = 1.5 // drag, 1/s: the liquid is thick, so a blob's speed follows its push
-const BUOYANCY = 0.5 // upward acceleration per unit of temperature above the liquid's
-const T_LIQUID = 0.45 // the temperature wax must exceed to float
-const GRAVITY = 0.01 // the small pull that makes wax at exactly T_LIQUID sink slowly
+export const BUOYANCY = 0.7 // upward acceleration per unit of temperature past the threshold in force
+// The two thresholds: afloat wax keeps rising until it is colder than T_LO, sinking wax keeps
+// sinking until it is warmer than T_HI. A single threshold gave every blob one resting height
+// where the stratified liquid matched it; two, with the liquid between them, give a cycle.
+export const T_LO = 0.35
+export const T_HI = 0.65
 export const V_MAX = 0.14 // speed clamp, per blob
 // Sideways motion is damped harder than vertical: nothing in a lamp pushes wax sideways on its
 // own, so a blob moves across only when a neighbour, the roll or a wall carries it.
@@ -253,15 +258,21 @@ const ROLL = 0.08 // 1/s: how firmly cooled wax settles toward its own side of t
 // Heat: the liquid is warm at the bulb and cool at the top (and breathes slowly),
 // the bulb heats wax near the base, the top cools it. Each blob trades heat with
 // the liquid slowly, scaled down by its size (a big blob has more to warm).
-const liquidTemp = (v: number, t: number) => 0.28 + 0.3 * v + 0.03 * Math.sin(t * 0.035 + 4 * v)
-const FLICKER = 0.05 // 1/s: the seeded wobble in each blob's heat, so no two cycles repeat
-const K_LIQUID = 0.03 // 1/s
-const K_BULB = 0.12 // 1/s, at full strength under the hot spot
-const K_TOP = 0.1 // 1/s
+// The liquid: LIQ_TOP under the cap, LIQ_TOP + LIQ_SPAN at the base, wobbling by LIQ_WOBBLE.
+export const LIQ_TOP = 0.4
+export const LIQ_SPAN = 0.2
+export const LIQ_WOBBLE = 0.02
+const liquidTemp = (v: number, t: number) => LIQ_TOP + LIQ_SPAN * v + LIQ_WOBBLE * Math.sin(t * 0.035 + 4 * v)
+const FLICKER = 0.02 // 1/s: the seeded wobble in each blob's heat; it staggers the blobs' phases, it does not drive them
+export const K_LIQUID = 0.3 // 1/s: fast enough that a blob's lift shrinks along its trip, so it slows
+export const K_BULB = 0.25 // 1/s, at full strength under the hot spot
+export const K_TOP = 0.25 // 1/s
 const BULB_FROM = 0.7 // the bulb's reach: none above this depth, full below BULB_TO
 const BULB_TO = 0.92
-const TOP_FROM = 0.22 // the top's chill: full above TOP_TO, none below this depth
-const TOP_TO = 0.04
+// The cap's chill, keyed on a blob's top edge (a big blob's centre never gets near the cap):
+// none below CHILL_FROM, full above CHILL_TO.
+const CHILL_FROM = 0.14
+const CHILL_TO = 0.04
 
 // Blob against blob. `s` is the centre distance over the sum of the radii, so
 // s = 1 is rims touching. Everything fades to nothing at RANGE ("a few radii").
@@ -281,11 +292,10 @@ const WALL_PUSH = 0.35 // its acceleration at the wall itself
 // WALL_SOFT), so wax meeting the cap settles against it instead of being thrown back while hot.
 const WALL_DAMP = 6 // 1/s at the wall itself
 export const TOP_EDGE = 0.03 // the highest a blob's rim may go (the layer of wax at the top is above it)
-const STICK = 0.06 // extra pull that holds wax in the pool until it is hot enough to tear free
 export const FLOOR = 0.985 // the lowest a blob's centre may go: down in the pool
 
 // A blob: `id` seeds its private traits; (x, y) the centre, y down; T its temperature.
-export type Body = { id: number; x: number; y: number; vx: number; vy: number; T: number; r: number; shape?: number }
+export type Body = { id: number; x: number; y: number; vx: number; vy: number; T: number; r: number; shape?: number; afloat?: boolean }
 
 export type SimOptions = { bubbles?: LavaBubbles; lamp?: boolean; interact?: boolean }
 
@@ -299,15 +309,21 @@ export const WARMUP_STEPS = 4200
 // Seconds of lamp time a clock count stands for.
 export const simTime = (sim: Sim) => sim.clock * DT
 
+// The weakest bulb and chill a blob can draw, and the full spread of its density offset: the
+// thermal-cycle conditions in the tests are checked against these extremes.
+export const BULB_TRAIT_MIN = 0.5
+export const CHILL_TRAIT_MIN = 0.6
+export const DENSITY_SPREAD = 0.04
+
 // One blob's own traits, from its id and size.
 function traits(b: Body) {
   const heft = b.r / R_REF
   return {
     weight: heft * heft,
     thermal: Math.max(0.6, Math.sqrt(heft)) * (0.8 + 0.4 * hash(b.id, 16)),
-    bulb: 0.5 + hash(b.id, 11),
-    chill: 0.6 + 0.8 * hash(b.id, 17),
-    density: (hash(b.id, 12) - 0.5) * 0.2,
+    bulb: BULB_TRAIT_MIN + hash(b.id, 11),
+    chill: CHILL_TRAIT_MIN + 0.8 * hash(b.id, 17),
+    density: (hash(b.id, 12) - 0.5) * DENSITY_SPREAD,
     flicker: FLICKER * (0.5 + hash(b.id, 18)),
     beat: 0.1 + 0.2 * hash(b.id, 19),
     side: hash(b.id, 20) < 0.5 ? -1 : 1,
@@ -370,7 +386,8 @@ export function step(sim: Sim, counted = true): void {
     const k = own[i]!
     const a = acc[i]!
     // Buoyancy lifts warm wax (y is down, so up is negative); drag resists; a seeded sway drifts it sideways.
-    const lift = BUOYANCY * (b.T - T_LIQUID - k.density) - GRAVITY - STICK * ramp(b.y, 0.88, 0.97)
+    if (b.afloat === undefined) b.afloat = b.T > (T_LO + T_HI) / 2
+    const lift = BUOYANCY * (b.T - (b.afloat ? T_LO : T_HI) - k.density)
     const drag = GAMMA * pace
     a.ay = -lift - drag * b.vy
     // The convection roll: warm wax climbs the middle, cooled wax sinks down its side of the glass.
@@ -392,7 +409,7 @@ export function step(sim: Sim, counted = true): void {
     if (low > 0) a.ay -= WALL_PUSH * Math.min(1, low / WALL_SOFT)
     // Heat: with the liquid, from the bulb (strongest over a slowly wandering hot spot), from the top's chill.
     const bulb = ramp(b.y, BULB_FROM, BULB_TO) * (0.4 + 0.6 * Math.exp(-(((b.x - spotX) / (0.5 * widest)) ** 2)))
-    const chill = ramp(b.y, TOP_FROM, TOP_TO)
+    const chill = ramp(b.y - b.r, CHILL_FROM, CHILL_TO)
     a.dT = (K_LIQUID * (liquidTemp(b.y, t) - b.T) + K_BULB * k.bulb * bulb * (1 - b.T) - K_TOP * k.chill * chill * b.T + k.flicker * Math.sin(k.beat * t + k.phase)) / k.thermal
   }
 
@@ -452,6 +469,10 @@ export function step(sim: Sim, counted = true): void {
     b.x += b.vx * DT
     b.y += b.vy * DT
     b.T = clamp(b.T + a.dT * DT, 0, 1)
+    // The flip: afloat wax that has cooled past T_LO starts to sink, sinking wax warmed past T_HI floats.
+    const dens = own[i]!.density
+    if (b.afloat && b.T < T_LO + dens) b.afloat = false
+    else if (!b.afloat && b.T > T_HI + dens) b.afloat = true
     const want = shapeTarget(b)
     b.shape = b.shape === undefined ? want : b.shape + (want - b.shape) * SHAPE_EASE
     // The hard edge behind the soft one: never outside, never stuck (only the velocity into a wall is lost).

@@ -858,14 +858,51 @@ const rhythm = (bubbles: 'few' | 'medium' | 'many') => {
   }
   const pairs: number[] = []
   for (let i = 0; i < vys.length; i++) for (let j = i + 1; j < vys.length; j++) pairs.push(corr(vys[i]!, vys[j]!))
-  turns.sort((a, b) => a - b)
-  return { medianTurn: turns[Math.floor(turns.length / 2)]!, meanCorr: pairs.reduce((s, x) => s + x, 0) / pairs.length }
+  // Turns fall in two groups, under the cap and mid-glass (a trip that gives up), so a median
+  // flips between them on any small change; the share that reaches the cap does not.
+  return { reach: turns.filter(y => y < 0.12).length / turns.length, meanCorr: pairs.reduce((s, x) => s + x, 0) / pairs.length }
 }
 
 test('rising wax reaches up under the cap before it turns back', async () => {
-  expect(rhythm('medium').medianTurn < 0.12).toBe(true)
+  expect(rhythm('medium').reach > 0.38).toBe(true)
 })
 
 test('blobs keep their own rhythm instead of rising and sinking in step', async () => {
   for (const bubbles of ['few', 'medium'] as const) expect(rhythm(bubbles).meanCorr < 0.5).toBe(true)
+})
+
+test('a hot blob meeting the cap settles against it instead of being thrown back', async () => {
+  const sim = simOf([{ id: 3, x: 0, y: 0.45, vx: 0, vy: 0, T: 0.85, r: 0.07 }])
+  let arrived = -1
+  let rebound = 0
+  for (let i = 0; i < 400; i++) {
+    step(sim)
+    const b = sim.bodies[0]!
+    if (arrived < 0 && b.y - b.r < 0.05) arrived = i
+    if (arrived >= 0 && i - arrived < 80 && b.T > 0.6) rebound = Math.max(rebound, b.vy)
+  }
+  expect(arrived >= 0).toBe(true)
+  // Still far warmer than the liquid, it must not head back down faster than a slow settle.
+  expect(rebound < 0.025).toBe(true)
+})
+
+test('a blob does not suddenly contract when it reaches the cap', async () => {
+  for (const bubbles of ['medium', 'many'] as const) {
+    const sim = createSim({ bubbles })
+    const hist: number[][] = sim.bodies.map(() => [])
+    let worst = 0
+    for (let i = 0; i < 24000; i++) {
+      step(sim)
+      blobsOf(sim, GLASS)
+        .filter(b => b.kind === 'wax')
+        .forEach((b, k) => {
+          const h = hist[k]!
+          h.push(b.ry)
+          if (h.length > 10) h.shift()
+          // Within a quarter of a second, near the cap, a blob's height must not fall by a quarter.
+          if (h.length === 10 && b.v - b.ry < 0.1) worst = Math.max(worst, 1 - h[9]! / h[0]!)
+        })
+    }
+    expect(worst < 0.25).toBe(true)
+  }
 })

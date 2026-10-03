@@ -164,7 +164,7 @@ export const HELP = [
 export const BUBBLES: Record<LavaBubbles, { count: number; size: number; pace: number }> = {
   few: { count: 3, size: 1.7, pace: 1.3 },
   medium: { count: 5, size: 1, pace: 1 },
-  many: { count: 9, size: 0.62, pace: 0.9 },
+  many: { count: 9, size: 0.62, pace: 0.95 },
 }
 
 const bubblesOf = (b: LavaBubbles | undefined) => BUBBLES[b ?? 'medium'] ?? BUBBLES.medium
@@ -268,12 +268,15 @@ const HEAT_SHARE = 0.01 // 1/s: heat traded between blobs in touch
 
 const WALL_SOFT = 0.05 // the soft boundary's depth
 const WALL_PUSH = 0.35 // its acceleration at the wall itself
+// The soft walls are springs with a damper in the same zone (about critical for WALL_PUSH over
+// WALL_SOFT), so wax meeting the cap settles against it instead of being thrown back while hot.
+const WALL_DAMP = 6 // 1/s at the wall itself
 export const TOP_EDGE = 0.03 // the highest a blob's rim may go (the layer of wax at the top is above it)
 const STICK = 0.06 // extra pull that holds wax in the pool until it is hot enough to tear free
 export const FLOOR = 0.985 // the lowest a blob's centre may go: down in the pool
 
 // A blob: `id` seeds its private traits; (x, y) the centre, y down; T its temperature.
-export type Body = { id: number; x: number; y: number; vx: number; vy: number; T: number; r: number }
+export type Body = { id: number; x: number; y: number; vx: number; vy: number; T: number; r: number; shape?: number }
 
 export type SimOptions = { bubbles?: LavaBubbles; lamp?: boolean; interact?: boolean }
 
@@ -372,7 +375,10 @@ export function step(sim: Sim, counted = true): void {
     const into = Math.abs(b.x) - (room - WALL_SOFT)
     if (into > 0) a.ax -= Math.sign(b.x) * WALL_PUSH * Math.min(1, into / WALL_SOFT)
     const high = TOP_EDGE + 0.9 * b.r + WALL_SOFT - b.y
-    if (high > 0) a.ay += WALL_PUSH * Math.min(1, high / WALL_SOFT)
+    if (high > 0) {
+      a.ay += WALL_PUSH * Math.min(1, high / WALL_SOFT)
+      a.ay -= WALL_DAMP * Math.min(1, high / WALL_SOFT) * b.vy
+    }
     const low = b.y - (FLOOR - WALL_SOFT)
     if (low > 0) a.ay -= WALL_PUSH * Math.min(1, low / WALL_SOFT)
     // Heat: with the liquid, from the bulb (strongest over a slowly wandering hot spot), from the top's chill.
@@ -437,6 +443,8 @@ export function step(sim: Sim, counted = true): void {
     b.x += b.vx * DT
     b.y += b.vy * DT
     b.T = clamp(b.T + a.dT * DT, 0, 1)
+    const want = shapeTarget(b)
+    b.shape = b.shape === undefined ? want : b.shape + (want - b.shape) * SHAPE_EASE
     // The hard edge behind the soft one: never outside, never stuck (only the velocity into a wall is lost).
     const room = Math.max(0, canonicalHalf(sim.lamp, b.y) - b.r * 0.85)
     if (Math.abs(b.x) > room) {
@@ -465,6 +473,18 @@ export function advanceFrame(sim: Sim, speed: LavaSpeed): void {
 // Every metaball of a lamp drawn in `glass`: the bottom pool, a thin cap at the
 // top, and the simulated blobs. The simulated glass is stretched sideways to the
 // real one, and the blobs grow or shrink with it, within limits.
+// The shape a blob's motion asks for: hot rising wax is soft and pulls long; cooler sinking wax
+// stays rounder; wax that has all but stopped under the cap slumps wider.
+function shapeTarget(b: Body): number {
+  const vel = b.vy
+  const flat = 1 - 0.2 * ramp(b.y, 0.22, 0.06) * (1 - Math.min(1, Math.abs(vel) / 0.02))
+  return flat * (1 + Math.min(0.6, Math.abs(vel) * (vel < 0 ? 8 : 5)))
+}
+// Wax changes shape slowly: the drawn shape eases toward the target over about SHAPE_TAU, so a
+// blob stopping under the cap spreads out instead of snapping from tall to flat.
+const SHAPE_TAU = 0.7 // s
+const SHAPE_EASE = 1 - Math.exp(-DT / SHAPE_TAU)
+
 export function blobsOf(sim: Sim, glass: Glass): Blob[] {
   const W = glass.widest
   const t = sim.tick * DT
@@ -482,10 +502,8 @@ export function blobsOf(sim: Sim, glass: Glass): Blob[] {
     })
   list.push({ u: 0.1 * W * Math.sin(t * 0.05), v: -0.035, rx: 0.55 * W, ry: 0.03 + 0.012 * Math.sin(t * 0.09 + 1), vel: 0, kind: 'cap' })
   for (const b of sim.bodies) {
-    // Hot rising wax is soft and pulls long; cooler sinking wax stays rounder; wax that has all but stopped under the cap slumps wider.
     const vel = b.vy
-    const flat = 1 - 0.2 * ramp(b.y, 0.22, 0.06) * (1 - Math.min(1, Math.abs(vel) / 0.02))
-    const stretch = flat * (1 + Math.min(0.6, Math.abs(vel) * (vel < 0 ? 8 : 5)))
+    const stretch = b.shape ?? shapeTarget(b)
     const r = b.r * size
     list.push({ u: b.x * k, v: b.y, rx: r / Math.sqrt(stretch), ry: r * stretch, vel, kind: 'wax' })
   }

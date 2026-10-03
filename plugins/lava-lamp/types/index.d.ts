@@ -31,9 +31,9 @@ export type LavaPalette = LavaColourWord | LavaPair
 export type LavaBubbles = 'few' | 'medium' | 'many'
 
 // What `/lava-lamp <words>` sets; a bare `/lava-lamp` reopens with the last.
-// `rotate` cycles slowly through a set of pairs and, while true, overrides `palette`;
+// `rotate` cycles slowly through a set of pairs and, while set, overrides `palette` ('clear': wax only, clear liquid);
 // a colour word removes it. An absent `bubbles` means `medium`.
-export type LavaOptions = { speed: LavaSpeed; palette: LavaPalette; lamp: boolean; rotate?: boolean; bubbles?: LavaBubbles }
+export type LavaOptions = { speed: LavaSpeed; palette: LavaPalette; lamp: boolean; rotate?: boolean | 'clear'; bubbles?: LavaBubbles }
 
 declare module 'claude-code' {
   interface PluginState {

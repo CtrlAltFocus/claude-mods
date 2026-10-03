@@ -47,7 +47,7 @@ function stop() {
   timer = undefined
 }
 
-const HINT = '[veryslow|slow|normal|fast] [orange|yellow|green|purple|blue|pink|<wax>-<liquid>|rotate] [few|medium|many] [lamp|nolamp] [off]'
+const HINT = '[veryslow|slow|normal|fast] [orange|yellow|green|purple|blue|pink|<wax>-<liquid>|rotate|rotate-clear] [few|medium|many] [lamp|nolamp] [off]'
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {

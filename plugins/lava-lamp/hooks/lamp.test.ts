@@ -906,3 +906,26 @@ test('a blob does not suddenly contract when it reaches the cap', async () => {
     expect(worst < 0.25).toBe(true)
   }
 })
+
+test('rotating is read as rotate, and rotate-clear rotates the wax over a clear liquid', async () => {
+  const a = parseArgs('rotating')
+  expect(a.ok && a.options.rotate === true).toBe(true)
+  const b = parseArgs('rotate-clear few')
+  expect(b.ok && b.options.rotate === 'clear').toBe(true)
+  expect(b.ok && describe(b.options).includes('rotating wax in clear liquid')).toBe(true)
+  const c = parseArgs('rotating-clear')
+  expect(c.ok && c.options.rotate === 'clear').toBe(true)
+  // A fixed colour word after it turns rotation off, as with rotate.
+  const d = parseArgs('rotate-clear green')
+  expect(d.ok && d.options.rotate === undefined && d.options.palette === 'green').toBe(true)
+})
+
+test('rotate-clear keeps the liquid clear while the wax colour moves through the rotation', async () => {
+  const look = { palette: 'orange' as const, rotate: 'clear' as const }
+  const early = schemeAt(look, 0)
+  const later = schemeAt(look, ROTATE_PERIOD_S * 2.2)
+  expect(early.clear && later.clear).toBe(true)
+  expect(JSON.stringify(early.mid) !== JSON.stringify(later.mid)).toBe(true)
+  // The wax follows the same rotation as rotate does.
+  expect(JSON.stringify(early.mid)).toBe(JSON.stringify(schemeAt({ palette: 'orange', rotate: true }, 0).mid))
+})

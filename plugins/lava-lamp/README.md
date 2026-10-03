@@ -13,7 +13,7 @@ The wax behaves like a real lamp's. Blobs warm in the pool at the base and rise 
 | Speed | `veryslow`, `slow`, `normal`, `fast` |
 | Colour | `orange`, `yellow`, `green`, `purple`, `blue`, `pink`. Each means a classic wax-in-liquid pair, e.g. `orange` is orange wax in violet. |
 | Pairs | `turquoise-violet`, `red-violet`, `yellow-pink`, `orange-yellow`, `white-red`, `orange-black`, `yellow-clear`, `green-clear`, `purple-clear`. A `-clear` liquid lets your terminal's background show through. |
-| Rotate | `rotate` blends slowly through eight pairs. Any colour word turns it off. |
+| Rotate | `rotate` (or `rotating`) blends slowly through eight pairs. `rotate-clear` rotates only the wax, over a clear liquid. Any colour word turns rotation off. |
 | Bubbles | `few` (big and heavy), `medium`, `many` (small and lively) |
 | Outline | `lamp`, `nolamp` (hide the cap and base) |
 | Close | `off` |

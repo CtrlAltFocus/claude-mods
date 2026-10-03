@@ -146,12 +146,14 @@ export const SPEED_STEP: Record<LavaSpeed, number> = { veryslow: 1, slow: 2, nor
 
 export const SPEEDS: LavaSpeed[] = ['veryslow', 'slow', 'normal', 'fast']
 export const BUBBLE_WORDS: LavaBubbles[] = ['few', 'medium', 'many']
-export const WORDS: string[] = [...SPEEDS, ...PALETTES, ...PAIR_NAMES, ...BUBBLE_WORDS, 'rotate', 'lamp', 'nolamp', 'off']
+export const WORDS: string[] = [...SPEEDS, ...PALETTES, ...PAIR_NAMES, ...BUBBLE_WORDS, 'rotate', 'rotate-clear', 'lamp', 'nolamp', 'off']
+// Other spellings people reach for, read as the word they mean.
+const ALIASES: Record<string, string> = { rotating: 'rotate', 'rotating-clear': 'rotate-clear' }
 
 // The words, grouped, for the reply to an unknown one.
 export const HELP = [
   `speeds: ${SPEEDS.join(', ')}`,
-  `colours: ${PALETTES.join(', ')}, rotate`,
+  `colours: ${PALETTES.join(', ')}, rotate, rotate-clear`,
   `wax-liquid pairs: ${PAIR_NAMES.join(', ')}`,
   `bubbles: ${BUBBLE_WORDS.join(', ')}`,
   'outline: lamp, nolamp',
@@ -177,7 +179,12 @@ export type Parsed =
 // A colour or pair word is fixed colour and turns rotation off; `rotate` replaces it.
 // Any unknown word rejects the whole line so nothing half-applies.
 export function parseArgs(args: string, prev: LavaOptions = DEFAULT_OPTIONS): Parsed {
-  const words = args.trim().toLowerCase().split(/\s+/).filter(w => w.length > 0)
+  const words = args
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(w => w.length > 0)
+    .map(w => ALIASES[w] ?? w)
   const unknown = words.filter(w => !WORDS.includes(w))
   if (unknown.length > 0) return { ok: false, unknown }
   const options = { ...prev }
@@ -189,6 +196,7 @@ export function parseArgs(args: string, prev: LavaOptions = DEFAULT_OPTIONS): Pa
       delete options.rotate
     } else if ((BUBBLE_WORDS as string[]).includes(w)) options.bubbles = w as LavaBubbles
     else if (w === 'rotate') options.rotate = true
+    else if (w === 'rotate-clear') options.rotate = 'clear'
     else if (w === 'lamp') options.lamp = true
     else if (w === 'nolamp') options.lamp = false
     else if (w === 'off') off = true
@@ -200,7 +208,8 @@ const BUBBLE_LABEL: Record<LavaBubbles, string> = { few: 'few big bubbles', medi
 
 export function describe(o: LavaOptions): string {
   const speed = o.speed === 'normal' ? 'normal speed' : o.speed === 'veryslow' ? 'very slow' : o.speed
-  const colour = o.rotate === true ? 'rotating colours' : PAIR_TABLE[pairOf(o.palette)].label
+  const colour =
+    o.rotate === true ? 'rotating colours' : o.rotate === 'clear' ? 'rotating wax in clear liquid' : PAIR_TABLE[pairOf(o.palette)].label
   return `${speed} · ${colour} · ${BUBBLE_LABEL[o.bubbles ?? 'medium'] ?? BUBBLE_LABEL.medium} · ${o.lamp ? 'lamp outline' : 'no lamp outline'}`
 }
 
@@ -549,9 +558,10 @@ export function rotationAt(t: number): { from: LavaPair; to: LavaPair; mix: numb
 }
 
 // The colour scheme in force at time t: the fixed palette, or the rotating blend
-// of wax and liquid together, so the background always matches its wax.
-export function schemeAt(look: { palette: LavaPalette; rotate?: boolean }, t: number): Scheme {
-  if (look.rotate !== true) return SCHEMES[pairOf(look.palette)]
+// of wax and liquid together, so the background always matches its wax. With
+// `rotate: 'clear'` only the wax rotates and the liquid stays clear.
+export function schemeAt(look: { palette: LavaPalette; rotate?: boolean | 'clear' }, t: number): Scheme {
+  if (look.rotate !== true && look.rotate !== 'clear') return SCHEMES[pairOf(look.palette)]
   const { from, to, mix: k } = rotationAt(t)
   const a = SCHEMES[from]
   const b = SCHEMES[to]
@@ -561,7 +571,7 @@ export function schemeAt(look: { palette: LavaPalette; rotate?: boolean }, t: nu
     edge: mixRGB(a.edge, b.edge, k),
     mid: mixRGB(a.mid, b.mid, k),
     hot: mixRGB(a.hot, b.hot, k),
-    clear: false,
+    clear: look.rotate === 'clear',
   }
 }
 
@@ -587,7 +597,7 @@ function lavaColor(f: number, v: number, s: Scheme): string | undefined {
 
 type Shape = (x: number, y: number) => string | undefined
 
-export type Look = { palette: LavaPalette; lamp: boolean; rotate?: boolean; bubbles?: LavaBubbles }
+export type Look = { palette: LavaPalette; lamp: boolean; rotate?: boolean | 'clear'; bubbles?: LavaBubbles }
 
 // The lamp silhouette over a w × h2 pixel grid (h2 = 2 × rows); a plain filled
 // body when the outline is off or there is no room for a cap and a base.
@@ -646,7 +656,7 @@ export function frame(columns: number, rows: number, sim: Sim, look: Partial<Loo
   const full: Look = {
     palette: look.palette ?? DEFAULT_OPTIONS.palette,
     lamp: look.lamp ?? DEFAULT_OPTIONS.lamp,
-    rotate: look.rotate === true,
+    rotate: look.rotate,
     bubbles: look.bubbles,
   }
   const w = Math.max(0, Math.floor(columns))

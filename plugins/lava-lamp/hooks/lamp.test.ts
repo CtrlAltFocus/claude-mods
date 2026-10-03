@@ -772,21 +772,43 @@ test('blobs passing close shoulder each other aside: harder for a faster pass, t
   expect(bigRiser.sinker > 2 * bigRiser.riser).toBe(true)
 })
 
-test('hovering: across a long run some blob lingers mid-glass, all but still', async () => {
-  const sim = createSim()
-  const run = new Map<number, number>()
-  let longest = 0
-  for (let i = 0; i < 24000; i++) {
-    step(sim)
-    for (const b of sim.bodies) {
-      const still = b.y > 0.25 && b.y < 0.75 && Math.abs(b.vy) < 0.004
-      const n = still ? (run.get(b.id) ?? 0) + 1 : 0
-      run.set(b.id, n)
-      longest = Math.max(longest, n)
+// A blob may linger mid-glass briefly, but not stand there: the owner saw one held for many
+// seconds against the tapered glass ("rather than staying hovering ... it should go down").
+test('no blob stands still mid-glass for long, though a brief linger happens', async () => {
+  const longestStall = (bubbles: 'few' | 'medium' | 'many', lamp: boolean) => {
+    const sim = createSim({ bubbles, lamp })
+    const run = new Map<number, number>()
+    let longest = 0
+    for (let i = 0; i < 24000; i++) {
+      step(sim)
+      for (const b of sim.bodies) {
+        const still = b.y > 0.25 && b.y < 0.75 && Math.abs(b.vy) < 0.004
+        const n = still ? (run.get(b.id) ?? 0) + 1 : 0
+        run.set(b.id, n)
+        longest = Math.max(longest, n)
+      }
     }
+    return longest * DT
   }
-  // At least three seconds of lamp time.
-  expect(longest * DT >= 3).toBe(true)
+  for (const bubbles of ['few', 'medium', 'many'] as const) for (const lamp of [true, false]) expect(longestStall(bubbles, lamp) < 6).toBe(true)
+  expect(longestStall('medium', true) >= 1).toBe(true)
+})
+
+test('a sinking blob directly above a rising one, against the tapered glass, gets past it', async () => {
+  const stack = simOf(
+    [
+      { id: 0, x: 0.2, y: 0.47, vx: 0, vy: 0, T: 0.49, r: 0.15, afloat: false },
+      { id: 2, x: 0.23, y: 0.7, vx: 0, vy: 0, T: 0.58, r: 0.15, afloat: true },
+    ],
+    { lamp: true },
+  )
+  let passedAt = -1
+  for (let i = 0; i < 400 && passedAt < 0; i++) {
+    step(stack)
+    if (stack.bodies[0]!.y > stack.bodies[1]!.y) passedAt = i
+  }
+  // Within ten seconds of lamp time the sinker is below the riser.
+  expect(passedAt >= 0).toBe(true)
 })
 
 test('the motion is not only up and down: blobs drift sideways while travelling much of the glass', async () => {
@@ -808,10 +830,10 @@ test('the motion is not only up and down: blobs drift sideways while travelling 
       right[k] = Math.max(right[k]!, b.x)
     })
   }
-  // Sideways motion is real but secondary: a lamp's wax mostly rises and sinks. Above about a
-  // third of vertical it reads as blobs swimming sideways on their own.
+  // Sideways motion is real but secondary: a lamp's wax mostly rises and sinks. The upper bound
+  // allows blobs squeezing past each other; swimming on their own is the near-still test's job.
   expect(sx / sy > 0.1).toBe(true)
-  expect(sx / sy < 0.35).toBe(true)
+  expect(sx / sy < 0.45).toBe(true)
   // Every blob travels most of the glass's height and some way across it.
   sim.bodies.forEach((_, k) => {
     expect(hi[k]! - lo[k]! > 0.5).toBe(true)
@@ -826,7 +848,8 @@ test('a blob that is barely rising or sinking does not wander sideways on its ow
   for (let i = 0; i < 24000; i++) {
     step(sim)
     for (const b of sim.bodies)
-      if (Math.abs(b.vy) < 0.003) {
+      // On its own: no other blob within reach. A blob squeezed aside by a neighbour is interaction.
+      if (Math.abs(b.vy) < 0.003 && !sim.bodies.some(o => o !== b && Math.hypot(o.x - b.x, o.y - b.y) < (o.r + b.r) * 1.3)) {
         still++
         stillX += Math.abs(b.vx)
       }
@@ -945,15 +968,9 @@ const rhythmWindows = (bubbles: 'few' | 'medium' | 'many') => {
 }
 
 test('blobs keep their own rhythm instead of rising and sinking in step', async () => {
-  for (const bubbles of ['medium', 'many'] as const) for (const c of rhythmWindows(bubbles)) expect(c < 0.3).toBe(true)
+  for (const bubbles of ['few', 'medium', 'many'] as const) for (const c of rhythmWindows(bubbles)) expect(c < 0.3).toBe(true)
 })
 
-// Held back, owner-ruled: the three big blobs of 'few' drift into step for minutes at a time, in
-// this version and the one before (windows measured 0.48 / 0.45 / 0.61 before, 0.61 / 0.75 / 0.64
-// now), and which way it goes flips with small changes. Fixing it is PROD-2087; register this again then.
-export const fewRhythmHeldBack = async () => {
-  for (const c of rhythmWindows('few')) expect(c < 0.5).toBe(true)
-}
 
 test('a hot blob meeting the cap settles against it instead of being thrown back', async () => {
   const sim = simOf([{ id: 3, x: 0, y: 0.45, vx: 0, vy: 0, T: 0.85, r: 0.07 }])

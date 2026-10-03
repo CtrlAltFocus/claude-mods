@@ -297,6 +297,11 @@ const PASS_SPEED = 0.02
 // then eases them back, so a pass reads as a sidestep, not a drift. Reaches PASS_RANGE radii-sums.
 const PASS_PUSH = 0.25
 const PASS_RANGE = 1.8
+// Two blobs going opposite ways that press into each other head-on would otherwise balance, the
+// riser propping up the sinker, both stalled (found in a tapered glass, where the walls stop them
+// sliding aside): DEFLECT is the share of the soft core's vertical push between them that is
+// taken away and turned sideways, so they squeeze past each other as soft wax does.
+const DEFLECT = 0.6
 
 const WALL_SOFT = 0.05 // the soft boundary's depth
 const WALL_PUSH = 0.35 // its acceleration at the wall itself
@@ -459,15 +464,24 @@ export function step(sim: Sim, counted = true): void {
         const pull = s < CORE_S ? -CORE * (1 - s / CORE_S) ** 2 : CLING * Math.sin((Math.PI * (s - CORE_S)) / (RANGE - CORE_S))
         const ux = dx / d
         const uy = dy / d
+        // Wax going opposite ways is soft to each other: head-on, the core props the other up
+        // only (1 - DEFLECT) as hard, and the rest of its push turns sideways (below), so the two
+        // squeeze past even where a wall stops them sliding aside.
+        const opposed = a.afloat !== b.afloat && pull < 0
+        const prop = opposed ? 1 - DEFLECT : 1
         ai.ax += pull * ux * wa
-        ai.ay += pull * uy * wa
+        ai.ay += pull * uy * wa * prop
         aj.ax -= pull * ux * wb
-        aj.ay -= pull * uy * wb
-        // Passing: opposite vertical motion. It trades heat and shoulders the two apart sideways.
-        const passing = ramp(-(a.vy * b.vy), 0, PASS_SPEED * PASS_SPEED)
+        aj.ay -= pull * uy * wb * prop
+        // Passing: one floating and one sinking, judged by what the two want rather than how they
+        // move, so a stalled head-on pair still counts. A pass trades heat and shoulders the two
+        // apart sideways; head-on, part of the core's push turns sideways too.
+        const passing = a.afloat !== b.afloat ? 1 : 0
         const close = (1 - clamp((s - 1) / (PASS_RANGE - 1), 0, 1)) ** 2
         const dvp = b.vy - a.vy
-        const nudge = PASS_PUSH * close * passing * ((dvp * dvp) / PASS_SPEED) * (dx < 0 ? -1 : 1)
+        const side = dx > 0 ? 1 : dx < 0 ? -1 : a.id < b.id ? 1 : -1
+        const deflect = opposed ? DEFLECT * -pull : 0
+        const nudge = (PASS_PUSH * close * passing * ((dvp * dvp) / PASS_SPEED) + deflect) * side
         ai.ax -= nudge * wa
         aj.ax += nudge * wb
         const share = sim.share === false ? 0 : HEAT_PASS * contact(s) * passing * (b.T - a.T)

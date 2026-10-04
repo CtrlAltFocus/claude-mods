@@ -308,7 +308,11 @@ const WALL_PUSH = 0.35 // its acceleration at the wall itself
 // The soft walls are springs with a damper in the same zone (about critical for WALL_PUSH over
 // WALL_SOFT), so wax meeting the cap settles against it instead of being thrown back while hot.
 const WALL_DAMP = 6 // 1/s at the wall itself
-export const TOP_EDGE = 0.03 // the highest a blob's rim may go (the layer of wax at the top is above it)
+// The cushion under the cap is thinner than the side walls': at WALL_SOFT deep it held blobs
+// short of the cap. Its damper scales with its stiffer spring, so wax still settles without rebound.
+const CAP_SOFT = 0.02
+const CAP_DAMP = 9
+export const TOP_EDGE = 0.015 // the highest a blob's rim may go (the layer of wax at the top is above it)
 export const FLOOR = 0.985 // the lowest a blob's centre may go: down in the pool
 
 // A blob: `id` seeds its private traits; (x, y) the centre, y down; T its temperature.
@@ -418,10 +422,10 @@ export function step(sim: Sim, counted = true): void {
     const room = canonicalHalf(sim.lamp, b.y) - b.r * 0.85
     const into = Math.abs(b.x) - (room - WALL_SOFT)
     if (into > 0) a.ax -= Math.sign(b.x) * WALL_PUSH * Math.min(1, into / WALL_SOFT)
-    const high = TOP_EDGE + 0.9 * b.r + WALL_SOFT - b.y
+    const high = TOP_EDGE + 0.9 * b.r + CAP_SOFT - b.y
     if (high > 0) {
-      a.ay += WALL_PUSH * Math.min(1, high / WALL_SOFT)
-      a.ay -= WALL_DAMP * Math.min(1, high / WALL_SOFT) * b.vy
+      a.ay += WALL_PUSH * Math.min(1, high / CAP_SOFT)
+      a.ay -= CAP_DAMP * Math.min(1, high / CAP_SOFT) * b.vy
     }
     const low = b.y - (FLOOR - WALL_SOFT)
     if (low > 0) a.ay -= WALL_PUSH * Math.min(1, low / WALL_SOFT)
@@ -568,7 +572,10 @@ export function blobsOf(sim: Sim, glass: Glass): Blob[] {
     const vel = b.vy
     const stretch = b.shape ?? shapeTarget(b)
     const r = b.r * size
-    list.push({ u: b.x * k, v: b.y, rx: r / Math.sqrt(stretch), ry: r * stretch, vel, kind: 'wax' })
+        // A pane narrower than the canonical glass shrinks blobs by `size` to keep them round, which
+    // drew wax well short of the cap in tall panes. Height shrinks only by its square root: blobs
+    // grow a little taller than wide there, and reach nearer the top (owner's choice, the middle way).
+    list.push({ u: b.x * k, v: b.y, rx: r / Math.sqrt(stretch), ry: b.r * Math.sqrt(size) * stretch, vel, kind: 'wax' })
   }
   return list
 }

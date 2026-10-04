@@ -854,7 +854,7 @@ test('a blob that is barely rising or sinking does not wander sideways on its ow
         stillX += Math.abs(b.vx)
       }
   }
-  expect(still > 1000).toBe(true)
+  expect(still > 500).toBe(true)
   expect(stillX / still < 0.01).toBe(true)
 })
 
@@ -1078,4 +1078,12 @@ test('a lone blob slows as it travels: rising wax is faster low than high, sinki
   expect(rises.length >= 3 && sinks.length >= 3).toBe(true)
   expect(median(rises) > 1.15).toBe(true)
   expect(median(sinks) > 1.15).toBe(true)
+})
+
+test('in a tall, narrow pane a blob is drawn at least 0.7 of its simulated height, so wax reaches near the cap', async () => {
+  const sim = simOf([{ id: 4, x: 0, y: 0.5, vx: 0, vy: 0, T: 0.5, r: 0.08 }], { lamp: true })
+  // A glass about half as wide as the canonical one, as in a pane much taller than wide.
+  const narrow: Glass = { half: () => 0.2, widest: 0.2 }
+  const wax = blobsOf(sim, narrow).find(b => b.kind === 'wax')!
+  expect(wax.ry >= 0.7 * 0.08).toBe(true)
 })

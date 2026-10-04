@@ -2,11 +2,13 @@ import { expect, test } from 'claude-code/testing'
 
 import {
   BUBBLES,
+  CONTRAST_MARGIN,
   DEFAULT_OPTIONS,
   DT,
   FLOOR,
   GLASS_RIM,
   HELP,
+  LIQUID_COLOURS,
   METAL,
   METAL_DARK,
   PAIR_NAMES,
@@ -20,7 +22,9 @@ import {
   TOP_EDGE,
   V_MAX,
   WARMUP_STEPS,
+  WAX_COLOURS,
   advanceFrame,
+  asPair,
   blobsOf,
   canonicalHalf,
   createSim,
@@ -347,15 +351,18 @@ test('every named pair parses, any case, and means itself', async () => {
     expect(pairOf(pair)).toBe(pair)
   }
   expect(parseArgs('yellow-clear slow few')).toEqual({ ok: true, options: { speed: 'slow', palette: 'yellow-clear', lamp: true, bubbles: 'few' }, off: false, words: 3 })
-  // Unknown combinations are refused, not guessed.
-  expect(parseArgs('blue-clear')).toEqual({ ok: false, unknown: ['blue-clear'] })
-  expect(parseArgs('violet-orange')).toEqual({ ok: false, unknown: ['violet-orange'] })
+  // A word that is not a `<wax>-<liquid>` of known colours is refused, not guessed.
+  expect(parseArgs('clear-orange')).toEqual({ ok: false, unknown: ['clear-orange'] })
+  expect(parseArgs('orange-nope')).toEqual({ ok: false, unknown: ['orange-nope'] })
   // Every pair draws a frame of its own, and says something of its own.
   const frames = ALL_PAIRS.map(pair => JSON.stringify(frameAt(40, 30, 17, { palette: pair })))
   expect(new Set(frames).size).toBe(ALL_PAIRS.length)
   expect(new Set(ALL_PAIRS.map(palette => describe({ speed: 'normal', palette, lamp: true }))).size).toBe(ALL_PAIRS.length)
-  // The unknown-word reply lists every pair.
-  for (const pair of ALL_PAIRS) expect(HELP.includes(pair)).toBe(true)
+  // The unknown-word reply names the pair form and lists the wax and liquid colours, not every pair.
+  expect(HELP.includes('<wax>-<liquid>')).toBe(true)
+  for (const colour of WAX_COLOURS) expect(HELP.includes(colour)).toBe(true)
+  expect(HELP.includes('or clear')).toBe(true)
+  expect(HELP.includes('orange-violet')).toBe(false)
 })
 
 test('the pairs look like their descriptions: saturated liquid, glowing at the base, wax that contrasts', async () => {
@@ -383,6 +390,157 @@ test('the pairs look like their descriptions: saturated liquid, glowing at the b
   const pink = SCHEMES['pink-pink']
   expect(pink.bottom[0] > pink.bottom[1] && pink.bottom[2] > pink.bottom[1] && luma(pink.bottom) < 40).toBe(true)
   for (const pair of ALL_PAIRS.filter(p => !p.endsWith('-clear') && p !== 'orange-yellow')) expect(bottomLuma('orange-yellow') > bottomLuma(pair) * 2).toBe(true)
+})
+
+// ------------------------------------------------------------ any <wax>-<liquid>
+
+// Every hand-tuned pair's scheme as it was before any `<wax>-<liquid>` word parsed.
+const TUNED_BEFORE: Record<string, Segment[][] | unknown> = {
+  'orange-violet': {'top': [50, 12, 100], 'bottom': [78, 22, 144], 'edge': [150, 18, 20], 'mid': [235, 90, 20], 'hot': [255, 214, 90], 'clear': false},
+  'yellow-blue': {'top': [10, 24, 108], 'bottom': [16, 46, 160], 'edge': [176, 104, 0], 'mid': [244, 184, 16], 'hot': [255, 250, 170], 'clear': false},
+  'green-blue': {'top': [4, 40, 92], 'bottom': [8, 68, 132], 'edge': [22, 112, 34], 'mid': [96, 204, 44], 'hot': [224, 255, 128], 'clear': false},
+  'purple-blue': {'top': [10, 16, 84], 'bottom': [16, 30, 128], 'edge': [118, 34, 156], 'mid': [172, 64, 214], 'hot': [244, 178, 255], 'clear': false},
+  'blue-blue': {'top': [3, 6, 20], 'bottom': [6, 15, 46], 'edge': [44, 112, 206], 'mid': [104, 186, 252], 'hot': [216, 246, 255], 'clear': false},
+  'pink-pink': {'top': [40, 4, 34], 'bottom': [68, 8, 54], 'edge': [164, 22, 92], 'mid': [246, 84, 152], 'hot': [255, 204, 196], 'clear': false},
+  'turquoise-violet': {'top': [50, 12, 100], 'bottom': [78, 22, 144], 'edge': [8, 118, 128], 'mid': [38, 212, 198], 'hot': [198, 255, 244], 'clear': false},
+  'red-violet': {'top': [32, 10, 88], 'bottom': [52, 18, 128], 'edge': [118, 8, 20], 'mid': [240, 48, 52], 'hot': [255, 150, 118], 'clear': false},
+  'yellow-pink': {'top': [96, 8, 62], 'bottom': [142, 16, 94], 'edge': [176, 104, 0], 'mid': [244, 184, 16], 'hot': [255, 250, 170], 'clear': false},
+  'orange-yellow': {'top': [244, 214, 84], 'bottom': [255, 232, 122], 'edge': [128, 26, 6], 'mid': [206, 62, 8], 'hot': [238, 110, 22], 'clear': false},
+  'white-red': {'top': [108, 6, 12], 'bottom': [158, 10, 20], 'edge': [168, 160, 172], 'mid': [232, 228, 236], 'hot': [255, 255, 255], 'clear': false},
+  'orange-black': {'top': [4, 3, 6], 'bottom': [16, 9, 9], 'edge': [150, 18, 20], 'mid': [235, 90, 20], 'hot': [255, 214, 90], 'clear': false},
+  'yellow-clear': {'top': [0, 0, 0], 'bottom': [0, 0, 0], 'edge': [176, 104, 0], 'mid': [244, 184, 16], 'hot': [255, 250, 170], 'clear': true},
+  'green-clear': {'top': [0, 0, 0], 'bottom': [0, 0, 0], 'edge': [22, 112, 34], 'mid': [96, 204, 44], 'hot': [224, 255, 128], 'clear': true},
+  'purple-clear': {'top': [0, 0, 0], 'bottom': [0, 0, 0], 'edge': [118, 34, 156], 'mid': [172, 64, 214], 'hot': [244, 178, 255], 'clear': true},
+}
+
+const lumaOf = luma
+const COMBOS = WAX_COLOURS.flatMap(wax => LIQUID_COLOURS.map(liquid => `${wax}-${liquid}`))
+
+test('the wax and liquid colours are the eleven asked for, and clear is a liquid only', async () => {
+  expect([...WAX_COLOURS]).toEqual(['orange', 'yellow', 'green', 'purple', 'blue', 'pink', 'red', 'turquoise', 'white', 'black', 'violet'])
+  expect([...LIQUID_COLOURS]).toEqual([...WAX_COLOURS, 'clear'])
+  expect(COMBOS.length).toBe(11 * 12)
+})
+
+test('any <wax>-<liquid> word parses, in any case, and a bad one is rejected whole', async () => {
+  for (const word of ['orange-clear', 'turquoise-black', 'white-violet', 'black-white', 'green-green', 'violet-turquoise', 'red-blue', 'black-black', 'ORANGE-Clear']) {
+    const p = parseArgs(word, { speed: 'slow', palette: 'green', lamp: true, rotate: true })
+    expect(p).toEqual({ ok: true, options: { speed: 'slow', palette: word.toLowerCase(), lamp: true }, off: false, words: 1 })
+  }
+  for (const combo of COMBOS) expect(asPair(combo)).toBe(combo)
+  for (const bad of ['clear-orange', 'clear-clear', 'orange-nope', 'nope-orange', 'orange-', '-orange', 'orange-clear-clear', 'rotate-clear-x'])
+    expect(parseArgs(bad)).toEqual({ ok: false, unknown: [bad] })
+  // One bad word stops the whole line.
+  expect(parseArgs('fast orange-clear clear-orange')).toEqual({ ok: false, unknown: ['clear-orange'] })
+  expect(parseArgs('rotate-clear')).toEqual({ ok: true, options: { ...DEFAULT_OPTIONS, rotate: 'clear' }, off: false, words: 1 })
+  // An option saved by an older version (a colour word, a named pair) still draws what it did.
+  expect(pairOf('yellow')).toBe('yellow-blue')
+  expect(pairOf('white-red')).toBe('white-red')
+  expect(pairOf('turquoise-black')).toBe('turquoise-black')
+  expect(pairOf('mauve' as never)).toBe('orange-violet')
+})
+
+test('every hand-tuned pair keeps exactly the colours it had before', async () => {
+  expect(Object.keys(TUNED_BEFORE).sort()).toEqual([...PAIR_NAMES].sort())
+  for (const [name, before] of Object.entries(TUNED_BEFORE)) {
+    expect(SCHEMES[name as keyof typeof SCHEMES]).toEqual(before as never)
+    expect(schemeAt({ palette: name as never }, 0)).toEqual(before as never)
+  }
+  // The single words still mean their classic pair.
+  for (const [word, pair] of Object.entries(PAIR_OF)) expect(SCHEMES[word as keyof typeof PAIR_OF]).toEqual(TUNED_BEFORE[pair] as never)
+})
+
+test('a composed liquid is the colour deepened: darker than its wax, saturated, never grey, bottom brighter', async () => {
+  // The liquids that are derived, not hand-tuned, are the ones to check for the formula.
+  for (const wax of WAX_COLOURS.filter(c => c !== 'black')) {
+    for (const liquid of ['orange', 'green', 'purple', 'turquoise'] as const) {
+      const s = SCHEMES[`${wax}-${liquid}` as keyof typeof SCHEMES]
+      for (const end of [s.top, s.bottom]) {
+        expect((Math.max(...end) - Math.min(...end)) / Math.max(...end) > 0.85).toBe(true)
+        // Its hue is its colour's: the strongest channel is the wax-mid colour's strongest.
+        const own = SCHEMES[`${liquid}-clear` as keyof typeof SCHEMES].mid
+        expect(end.indexOf(Math.max(...end))).toBe((own as number[]).indexOf(Math.max(...own)))
+      }
+      expect(lumaOf(s.top) <= lumaOf(s.bottom)).toBe(true)
+    }
+  }
+  // Darker than the wax of its own colour: each liquid against the same colour's wax.
+  for (const colour of ['orange', 'green', 'purple', 'turquoise', 'red', 'pink', 'violet', 'blue'] as const) {
+    const s = SCHEMES[`${colour}-${colour}` as keyof typeof SCHEMES]
+    expect(lumaOf(s.bottom) < lumaOf(s.mid)).toBe(true)
+    expect((Math.max(...s.bottom) - Math.min(...s.bottom)) / Math.max(...s.bottom) > 0.5).toBe(true)
+  }
+  // The hand-tuned liquids stay where they were: violet, black, a light yellow, plum, red, blue.
+  expect(SCHEMES['green-violet'].bottom).toEqual(SCHEMES['orange-violet'].bottom)
+  expect(SCHEMES['green-black'].top).toEqual(SCHEMES['orange-black'].top)
+  expect(SCHEMES['black-yellow'].bottom).toEqual(SCHEMES['orange-yellow'].bottom)
+  expect(SCHEMES['green-pink'].top).toEqual(SCHEMES['pink-pink'].top)
+  expect(SCHEMES['green-red'].bottom).toEqual(SCHEMES['white-red'].bottom)
+  expect(SCHEMES['orange-blue'].bottom).toEqual(SCHEMES['yellow-blue'].bottom)
+  // White is a pale liquid, black is near-black.
+  expect(lumaOf(SCHEMES['black-white'].bottom) > 200 && lumaOf(SCHEMES['black-white'].top) > 200).toBe(true)
+  expect(lumaOf(SCHEMES['turquoise-black'].bottom) < 20).toBe(true)
+})
+
+test(`for all ${11 * 12} combinations the wax stands off the liquid by at least ${CONTRAST_MARGIN} luma (clear excluded)`, async () => {
+  expect(CONTRAST_MARGIN).toBe(50)
+  let checked = 0
+  for (const combo of COMBOS) {
+    const s = SCHEMES[combo as keyof typeof SCHEMES]
+    expect(s.clear).toBe(combo.endsWith('-clear'))
+    if (s.clear) continue
+    checked++
+    for (const end of [s.top, s.bottom]) expect(Math.abs(lumaOf(s.mid) - lumaOf(end)) >= CONTRAST_MARGIN - 1e-6).toBe(true)
+    // The gradient still runs the right way, brighter at the bulb.
+    expect(lumaOf(s.top) <= lumaOf(s.bottom) + 1e-6).toBe(true)
+  }
+  expect(checked).toBe(11 * 11)
+  // The ones the guard has to move: same-colour and near-colour pairs, in the right direction.
+  expect(lumaOf(SCHEMES['white-white'].bottom) < lumaOf(SCHEMES['white-white'].mid)).toBe(true)
+  expect(lumaOf(SCHEMES['black-black'].top) > lumaOf(SCHEMES['black-black'].mid)).toBe(true)
+  expect(lumaOf(SCHEMES['yellow-white'].top) > lumaOf(SCHEMES['yellow-white'].mid)).toBe(true)
+  // A pair already clear of the wax is not touched by the guard.
+  expect(SCHEMES['turquoise-black'].top).toEqual(SCHEMES['orange-black'].top)
+})
+
+test('white and black wax show in a frame against a dark liquid and a light one', async () => {
+  const lacking: string[] = []
+  for (const pair of ['white-violet', 'white-black', 'white-blue', 'white-yellow', 'black-white', 'black-yellow', 'black-orange', 'black-violet', 'black-black'] as const) {
+    const s = SCHEMES[pair]
+    const f = frameAt(40, 30, 17, { palette: pair, lamp: false })
+    const liquid = [s.top, s.bottom].map(lumaOf)
+    // A pixel is wax where its colour stands off the liquid's colour at both ends of the glass.
+    const standsOff = (c: string | undefined) =>
+      c !== undefined && liquid.every(x => Math.abs(lumaOf([1, 3, 5].map(i => parseInt(c.slice(i, i + 2), 16))) - x) >= CONTRAST_MARGIN / 2)
+    let wax = 0
+    let liquidPixels = 0
+    for (const seg of f.flat())
+      for (const c of [seg.color, seg.backgroundColor]) {
+        if (c === undefined) continue
+        if (standsOff(c)) wax += seg.text.length
+        else liquidPixels += seg.text.length
+      }
+    if (wax <= 100 || liquidPixels <= 100) lacking.push(`${pair}: wax ${wax}, liquid ${liquidPixels}`)
+  }
+  expect(lacking).toEqual([])
+  // White and black wax are not the other colours' wax.
+  expect(SCHEMES['white-violet'].mid).not.toEqual(SCHEMES['black-violet'].mid)
+  expect(SCHEMES['violet-black'].mid).not.toEqual(SCHEMES['purple-black'].mid)
+  expect(SCHEMES['violet-black'].mid[2] > SCHEMES['violet-black'].mid[0]).toBe(true)
+})
+
+test('composed pairs describe themselves', async () => {
+  const said = (palette: string) => describe({ speed: 'normal', palette: palette as never, lamp: true })
+  expect(said('orange-clear')).toBe('normal speed · orange wax in clear liquid · medium bubbles · lamp outline')
+  expect(said('turquoise-black')).toContain('turquoise wax in black')
+  expect(said('white-violet')).toContain('white wax in violet')
+  expect(said('green-green')).toContain('green wax in green')
+  expect(said('blue-red')).toContain('light blue wax in red')
+  // The hand-tuned labels are unchanged.
+  expect(said('pink-pink')).toContain('pink wax in deep pink')
+  expect(said('orange-yellow')).toContain('orange wax in yellow')
+  // Every combination says something of its own.
+  expect(new Set(COMBOS.map(said)).size).toBe(COMBOS.length)
 })
 
 // ------------------------------------------------------------ clear liquid

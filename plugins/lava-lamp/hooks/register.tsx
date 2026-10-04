@@ -47,11 +47,12 @@ function stop() {
   timer = undefined
 }
 
-const HINT = '[veryslow|slow|normal|fast] [orange|yellow|green|purple|blue|pink|<wax>-<liquid>|rotate|rotate-clear] [few|medium|many] [lamp|nolamp] [off]'
+const HINT =
+  '[veryslow|slow|normal|fast] [orange|yellow|green|purple|blue|pink|rotate|rotate-clear] [<wax>-<liquid>, e.g. orange-clear, turquoise-black, white-violet] [few|medium|many] [lamp|nolamp] [off]'
 
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
-    await $.command.register({ name: 'lava-lamp', description: 'Toggle the lava lamp pane, or set its speed, wax-in-liquid colours (or rotating colours), bubble count and outline', argumentHint: HINT })
+    await $.command.register({ name: 'lava-lamp', description: 'Toggle the lava lamp pane, or set its speed, wax-in-liquid colours (any <wax>-<liquid>, or rotating colours), bubble count and outline', argumentHint: HINT })
     return next(e)
   })
 

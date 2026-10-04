@@ -16,11 +16,14 @@
 // The simulation advances in fixed steps of DT seconds. A speed word only changes
 // how many steps run per drawn frame, so one seed traces one path at every speed.
 //
-// Colour is a wax-in-liquid pair as sold for real lamps: a wax gradient (edge,
-// mid, hot core) over a liquid gradient (top to bottom, brighter at the bulb).
+// Colour is a wax-in-liquid pair: a wax gradient (edge, mid, hot core) over a
+// liquid gradient (top to bottom, brighter at the bulb). Any `<wax>-<liquid>` word
+// parses: the liquid is the colour's own liquid (hand-tuned where one exists, else
+// derived from its wax), nudged until the wax stands off it (see `guarded`), unless a
+// hand-tuned pair of that name exists, which is used exactly as tuned.
 // A `clear` liquid has no colour of its own, so the terminal background shows.
 
-import type { LavaBubbles, LavaColourWord, LavaOptions, LavaPair, LavaPalette, LavaSpeed } from '../types'
+import type { LavaBubbles, LavaColourWord, LavaLiquidColour, LavaOptions, LavaPair, LavaPalette, LavaSpeed, LavaWaxColour } from '../types'
 
 // An ellipse of influence: centre (u across, v down) and radii, all in
 // glass-height units. `vel` is the vertical speed (glass heights per second,
@@ -54,15 +57,105 @@ const WAX = {
   yellow: { edge: [176, 104, 0], mid: [244, 184, 16], hot: [255, 250, 170] },
   green: { edge: [22, 112, 34], mid: [96, 204, 44], hot: [224, 255, 128] },
   purple: { edge: [118, 34, 156], mid: [172, 64, 214], hot: [244, 178, 255] },
-  lightBlue: { edge: [44, 112, 206], mid: [104, 186, 252], hot: [216, 246, 255] },
+  blue: { edge: [44, 112, 206], mid: [104, 186, 252], hot: [216, 246, 255] },
   pink: { edge: [164, 22, 92], mid: [246, 84, 152], hot: [255, 204, 196] },
   turquoise: { edge: [8, 118, 128], mid: [38, 212, 198], hot: [198, 255, 244] },
   red: { edge: [118, 8, 20], mid: [240, 48, 52], hot: [255, 150, 118] },
   white: { edge: [168, 160, 172], mid: [232, 228, 236], hot: [255, 255, 255] },
+  // Charcoal with a dim cool highlight at the core, so it still reads against a dark liquid.
+  black: { edge: [10, 10, 14], mid: [52, 54, 66], hot: [124, 134, 166] },
+  // Bluer and deeper than purple.
+  violet: { edge: [52, 24, 140], mid: [108, 66, 232], hot: [190, 160, 255] },
 } satisfies Record<string, Wax>
+
+// Every colour that can be the wax, and every liquid: the same colours, and `clear`.
+export const WAX_COLOURS: LavaWaxColour[] = ['orange', 'yellow', 'green', 'purple', 'blue', 'pink', 'red', 'turquoise', 'white', 'black', 'violet']
+export const LIQUID_COLOURS: LavaLiquidColour[] = [...WAX_COLOURS, 'clear']
 
 // Deep, saturated liquids; the bottom is the brighter end (the bulb's glow).
 const VIOLET: Liquid = { top: [50, 12, 100], bottom: [78, 22, 144] }
+const ROYAL_BLUE: Liquid = { top: [10, 24, 108], bottom: [16, 46, 160] }
+const PLUM: Liquid = { top: [40, 4, 34], bottom: [68, 8, 54] }
+const RED_LIQUID: Liquid = { top: [108, 6, 12], bottom: [158, 10, 20] }
+const BLACK_LIQUID: Liquid = { top: [4, 3, 6], bottom: [16, 9, 9] }
+// The light liquids: a luminous yellow, and a pale ivory.
+const LIGHT_YELLOW: Liquid = { top: [244, 214, 84], bottom: [255, 232, 122] }
+const IVORY: Liquid = { top: [238, 232, 214], bottom: [252, 248, 234] }
+
+// Rec. 709 luma of an RGB, 0..255: the one measure of "how far apart" the wax and liquid are.
+const luma = (c: readonly number[]) => 0.2126 * c[0]! + 0.7152 * c[1]! + 0.0722 * c[2]!
+
+// A liquid derived from a colour: its wax's hue, saturated to at least LIQUID_MIN_SAT,
+// at value LIQUID_TOP_V at the top and LIQUID_BOTTOM_V at the bottom (the hand-tuned
+// liquids sit about there): a deep, darkened version of the colour, never grey.
+const LIQUID_MIN_SAT = 0.9
+const LIQUID_TOP_V = 0.4
+const LIQUID_BOTTOM_V = 0.58
+
+function deriveLiquid(wax: Wax): Liquid {
+  const [r, g, b] = wax.mid
+  const max = Math.max(r, g, b)
+  const span = max - Math.min(r, g, b)
+  let hue = 0
+  if (span > 0) hue = max === r ? ((g - b) / span + 6) % 6 : max === g ? (b - r) / span + 2 : (r - g) / span + 4
+  const sat = Math.max(LIQUID_MIN_SAT, max === 0 ? 0 : span / max)
+  const at = (v: number): RGB => {
+    const channel = (n: number) => 255 * v * (1 - sat * Math.max(0, Math.min((n + hue) % 6, 4 - ((n + hue) % 6), 1)))
+    return [channel(5), channel(3), channel(1)]
+  }
+  return { top: at(LIQUID_TOP_V), bottom: at(LIQUID_BOTTOM_V) }
+}
+
+// Where a colour has a hand-tuned liquid it is used; the others are derived.
+const LIQUID_TUNED: Partial<Record<LavaWaxColour, Liquid>> = {
+  violet: VIOLET,
+  blue: ROYAL_BLUE,
+  pink: PLUM,
+  yellow: LIGHT_YELLOW,
+  red: RED_LIQUID,
+  black: BLACK_LIQUID,
+  white: IVORY,
+}
+const liquidOf = (colour: LavaWaxColour): Liquid => LIQUID_TUNED[colour] ?? deriveLiquid(WAX[colour])
+
+// The contrast guard: the wax's mid colour and each end of the liquid differ by at least
+// CONTRAST_MARGIN of luma (0..255). A liquid already clear of it is left alone. Otherwise it is
+// pushed the way it already leans: a lighter liquid lighter, a darker one darker, switching to
+// the other way when there is no room (a liquid cannot go below DARKEST_LIQUID_LUMA, or
+// above white). Darkening scales both ends by one factor, so the hue and the top-to-bottom
+// gradient stay; lightening raises the top to the wax's luma plus the margin, and the bottom
+// as far above that as it was above the top (up to white), scaling up (at most LIFT_CAP,
+// keeping its saturation) and then mixing toward white.
+export const CONTRAST_MARGIN = 50
+const DARKEST_LIQUID_LUMA = 12
+const LIFT_CAP = 2.5
+
+function raised(c: RGB, target: number): RGB {
+  const scale = Math.min(LIFT_CAP, target / Math.max(luma(c), 1))
+  const scaled = c.map(x => Math.min(255, x * scale)) as RGB
+  const l = luma(scaled)
+  if (l >= target) return scaled
+  const k = (target - l) / (255 - l)
+  return scaled.map(x => x + (255 - x) * k) as RGB
+}
+
+function guarded(wax: Wax, liquid: Liquid): Liquid {
+  const mid = luma(wax.mid)
+  const [lt, lb] = [luma(liquid.top), luma(liquid.bottom)]
+  if (Math.abs(mid - lt) >= CONTRAST_MARGIN && Math.abs(mid - lb) >= CONTRAST_MARGIN) return liquid
+  const below = mid - CONTRAST_MARGIN
+  const above = mid + CONTRAST_MARGIN
+  const canDarken = below >= DARKEST_LIQUID_LUMA
+  const canLighten = above <= 255
+  const lighten = (lt + lb) / 2 > mid ? canLighten : !canDarken
+  if (!lighten) {
+    const f = Math.min(1, below / Math.max(lt, lb))
+    return { top: liquid.top.map(x => x * f) as RGB, bottom: liquid.bottom.map(x => x * f) as RGB }
+  }
+  // The top goes to the margin; the bottom keeps its lead over the top (up to white).
+  const fix = (c: RGB, target: number): RGB => (luma(c) < target ? raised(c, target) : c)
+  return { top: fix(liquid.top, above), bottom: fix(liquid.bottom, Math.min(255, above + Math.max(0, lb - lt))) }
+}
 
 const scheme = (wax: Wax, liquid: Liquid | undefined): Scheme => ({
   top: liquid?.top ?? [0, 0, 0],
@@ -73,31 +166,74 @@ const scheme = (wax: Wax, liquid: Liquid | undefined): Scheme => ({
   clear: liquid === undefined,
 })
 
-// Every named pair: the words that mean exactly it. `label` is how a reply says it.
-// Pairs that share a liquid word are tuned to their wax (a royal blue under
-// yellow, a teal under green), as real lamps' blues differ.
-const PAIR_TABLE: Record<LavaPair, { label: string; scheme: Scheme }> = {
+// The hand-tuned pairs: each is used exactly as written, in place of the composition
+// of its wax and liquid. `label` is how a reply says it. Pairs that share a liquid word
+// are tuned to their wax (a royal blue under yellow, a teal under green), as real lamps'
+// blues differ.
+type TunedPair =
+  | 'orange-violet'
+  | 'yellow-blue'
+  | 'green-blue'
+  | 'purple-blue'
+  | 'blue-blue'
+  | 'pink-pink'
+  | 'turquoise-violet'
+  | 'red-violet'
+  | 'yellow-pink'
+  | 'orange-yellow'
+  | 'white-red'
+  | 'orange-black'
+  | 'yellow-clear'
+  | 'green-clear'
+  | 'purple-clear'
+
+const TUNED: Record<TunedPair, { label: string; scheme: Scheme }> = {
   'orange-violet': { label: 'orange wax in violet', scheme: scheme(WAX.orange, VIOLET) },
-  'yellow-blue': { label: 'yellow wax in blue', scheme: scheme(WAX.yellow, { top: [10, 24, 108], bottom: [16, 46, 160] }) },
+  'yellow-blue': { label: 'yellow wax in blue', scheme: scheme(WAX.yellow, ROYAL_BLUE) },
   'green-blue': { label: 'green wax in blue', scheme: scheme(WAX.green, { top: [4, 40, 92], bottom: [8, 68, 132] }) },
   'purple-blue': { label: 'purple wax in blue', scheme: scheme(WAX.purple, { top: [10, 16, 84], bottom: [16, 30, 128] }) },
   // Same hue as its wax, the liquid very very dark.
-  'blue-blue': { label: 'light blue wax in dark blue', scheme: scheme(WAX.lightBlue, { top: [3, 6, 20], bottom: [6, 15, 46] }) },
+  'blue-blue': { label: 'light blue wax in dark blue', scheme: scheme(WAX.blue, { top: [3, 6, 20], bottom: [6, 15, 46] }) },
   // A very dark plum-magenta, so the pink wax keeps its contrast.
-  'pink-pink': { label: 'pink wax in deep pink', scheme: scheme(WAX.pink, { top: [40, 4, 34], bottom: [68, 8, 54] }) },
+  'pink-pink': { label: 'pink wax in deep pink', scheme: scheme(WAX.pink, PLUM) },
   'turquoise-violet': { label: 'turquoise wax in violet', scheme: scheme(WAX.turquoise, VIOLET) },
   'red-violet': { label: 'red wax in violet', scheme: scheme(WAX.red, { top: [32, 10, 88], bottom: [52, 18, 128] }) },
   'yellow-pink': { label: 'yellow wax in pink', scheme: scheme(WAX.yellow, { top: [96, 8, 62], bottom: [142, 16, 94] }) },
-  // The one bright background: a light, luminous liquid.
-  'orange-yellow': { label: 'orange wax in yellow', scheme: scheme(WAX.orangeDeep, { top: [244, 214, 84], bottom: [255, 232, 122] }) },
-  'white-red': { label: 'white wax in red', scheme: scheme(WAX.white, { top: [108, 6, 12], bottom: [158, 10, 20] }) },
-  'orange-black': { label: 'orange wax in black', scheme: scheme(WAX.orange, { top: [4, 3, 6], bottom: [16, 9, 9] }) },
+  // The one bright background among them: a light, luminous liquid, under the deeper orange.
+  'orange-yellow': { label: 'orange wax in yellow', scheme: scheme(WAX.orangeDeep, LIGHT_YELLOW) },
+  'white-red': { label: 'white wax in red', scheme: scheme(WAX.white, RED_LIQUID) },
+  'orange-black': { label: 'orange wax in black', scheme: scheme(WAX.orange, BLACK_LIQUID) },
   'yellow-clear': { label: 'yellow wax in clear liquid', scheme: scheme(WAX.yellow, undefined) },
   'green-clear': { label: 'green wax in clear liquid', scheme: scheme(WAX.green, undefined) },
   'purple-clear': { label: 'purple wax in clear liquid', scheme: scheme(WAX.purple, undefined) },
 }
 
-export const PAIR_NAMES = Object.keys(PAIR_TABLE) as LavaPair[]
+// The words of the hand-tuned pairs.
+export const PAIR_NAMES = Object.keys(TUNED) as LavaPair[]
+
+// A `<wax>-<liquid>` word, or undefined when it is not one.
+export function asPair(word: string): LavaPair | undefined {
+  const at = word.indexOf('-')
+  if (at < 0) return undefined
+  const wax = word.slice(0, at)
+  const liquid = word.slice(at + 1)
+  return (WAX_COLOURS as string[]).includes(wax) && (LIQUID_COLOURS as string[]).includes(liquid) ? (word as LavaPair) : undefined
+}
+
+// A pair's label and colours: the hand-tuned entry if there is one, else the wax over
+// its liquid (guarded), or over no liquid at all for `clear`.
+function pairEntry(wax: LavaWaxColour, liquid: LavaLiquidColour): { label: string; scheme: Scheme } {
+  const tuned = (TUNED as Partial<Record<string, { label: string; scheme: Scheme }>>)[`${wax}-${liquid}`]
+  if (tuned !== undefined) return tuned
+  const waxName = wax === 'blue' ? 'light blue' : wax
+  if (liquid === 'clear') return { label: `${waxName} wax in clear liquid`, scheme: scheme(WAX[wax], undefined) }
+  return { label: `${waxName} wax in ${liquid}`, scheme: scheme(WAX[wax], guarded(WAX[wax], liquidOf(liquid))) }
+}
+
+// Every `<wax>-<liquid>` pair, made once.
+const PAIR_TABLE = Object.fromEntries(
+  WAX_COLOURS.flatMap(wax => LIQUID_COLOURS.map(liquid => [`${wax}-${liquid}`, pairEntry(wax, liquid)])),
+) as Record<LavaPair, { label: string; scheme: Scheme }>
 
 // What each single colour word means. A saved option keeps the word as typed
 // and is resolved here at draw time, so options saved earlier stay valid.
@@ -114,14 +250,14 @@ export const PAIR_OF: Record<LavaColourWord, LavaPair> = {
 export const PALETTES: LavaColourWord[] = ['orange', 'purple', 'green', 'blue', 'pink', 'yellow']
 
 export const SCHEMES = Object.fromEntries([
-  ...PAIR_NAMES.map(name => [name, PAIR_TABLE[name].scheme]),
+  ...(Object.keys(PAIR_TABLE) as LavaPair[]).map(name => [name, PAIR_TABLE[name].scheme]),
   ...PALETTES.map(word => [word, PAIR_TABLE[PAIR_OF[word]].scheme]),
 ]) as Record<LavaPalette, Scheme>
 
 // The pair a palette (word or pair) draws; an unrecognised saved value draws the default.
 export function pairOf(palette: LavaPalette): LavaPair {
   if (Object.hasOwn(PAIR_OF, palette)) return PAIR_OF[palette as LavaColourWord]
-  return Object.hasOwn(PAIR_TABLE, palette) ? (palette as LavaPair) : PAIR_OF.orange
+  return asPair(palette) ?? PAIR_OF.orange
 }
 
 // `rotate` walks these in order, every blend running between pairs whose wax
@@ -148,7 +284,8 @@ export const SPEED_STEP: Record<LavaSpeed, number> = { veryslow: 1, slow: 2, nor
 
 export const SPEEDS: LavaSpeed[] = ['veryslow', 'slow', 'normal', 'fast']
 export const BUBBLE_WORDS: LavaBubbles[] = ['few', 'medium', 'many']
-export const WORDS: string[] = [...SPEEDS, ...PALETTES, ...PAIR_NAMES, ...BUBBLE_WORDS, 'rotate', 'rotate-clear', 'lamp', 'nolamp', 'off']
+// The fixed words; a `<wax>-<liquid>` pair is any other word `asPair` accepts.
+export const WORDS: string[] = [...SPEEDS, ...PALETTES, ...BUBBLE_WORDS, 'rotate', 'rotate-clear', 'lamp', 'nolamp', 'off']
 // Other spellings people reach for, read as the word they mean.
 const ALIASES: Record<string, string> = { rotating: 'rotate', 'rotating-clear': 'rotate-clear' }
 
@@ -156,7 +293,7 @@ const ALIASES: Record<string, string> = { rotating: 'rotate', 'rotating-clear': 
 export const HELP = [
   `speeds: ${SPEEDS.join(', ')}`,
   `colours: ${PALETTES.join(', ')}, rotate, rotate-clear`,
-  `wax-liquid pairs: ${PAIR_NAMES.join(', ')}`,
+  `pairs: <wax>-<liquid>, wax: ${WAX_COLOURS.join(', ')}; liquid: the same or clear`,
   `bubbles: ${BUBBLE_WORDS.join(', ')}`,
   'outline: lamp, nolamp',
   'off',
@@ -187,13 +324,13 @@ export function parseArgs(args: string, prev: LavaOptions = DEFAULT_OPTIONS): Pa
     .split(/\s+/)
     .filter(w => w.length > 0)
     .map(w => ALIASES[w] ?? w)
-  const unknown = words.filter(w => !WORDS.includes(w))
+  const unknown = words.filter(w => !WORDS.includes(w) && asPair(w) === undefined)
   if (unknown.length > 0) return { ok: false, unknown }
   const options = { ...prev }
   let off = false
   for (const w of words) {
     if ((SPEEDS as string[]).includes(w)) options.speed = w as LavaSpeed
-    else if ((PALETTES as string[]).includes(w) || (PAIR_NAMES as string[]).includes(w)) {
+    else if ((PALETTES as string[]).includes(w) || asPair(w) !== undefined) {
       options.palette = w as LavaPalette
       delete options.rotate
     } else if ((BUBBLE_WORDS as string[]).includes(w)) options.bubbles = w as LavaBubbles

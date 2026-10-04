@@ -12,13 +12,13 @@ The wax behaves like a real lamp's. Blobs warm in the pool at the base and rise 
 |---|---|
 | Speed | `veryslow`, `slow`, `normal`, `fast` |
 | Colour | `orange`, `yellow`, `green`, `purple`, `blue`, `pink`. Each means a classic wax-in-liquid pair, e.g. `orange` is orange wax in violet. |
-| Pairs | `turquoise-violet`, `red-violet`, `yellow-pink`, `orange-yellow`, `white-red`, `orange-black`, `yellow-clear`, `green-clear`, `purple-clear`. A `-clear` liquid lets your terminal's background show through. |
+| Pairs | Any `<wax>-<liquid>`: wax and liquid from `orange`, `yellow`, `green`, `purple`, `blue`, `pink`, `red`, `turquoise`, `white`, `black`, `violet`; the liquid may also be `clear`, which lets your terminal's background show through. A colour used as liquid is drawn as a deep version of itself, and kept far enough from the wax to show it. Pairs taken from real lamps (e.g. `orange-yellow`, `white-red`, `orange-black`) keep their hand-tuned colours. |
 | Rotate | `rotate` (or `rotating`) blends slowly through eight pairs. `rotate-clear` rotates only the wax, over a clear liquid. Any colour word turns rotation off. |
 | Bubbles | `few` (big and heavy), `medium`, `many` (small and lively) |
 | Outline | `lamp`, `nolamp` (hide the cap and base) |
 | Close | `off` |
 
-Example: `/lava-lamp turquoise-violet few slow`.
+Examples: `/lava-lamp turquoise-violet few slow`, `/lava-lamp orange-clear`, `/lava-lamp white-black many`.
 
 ## Notes
 

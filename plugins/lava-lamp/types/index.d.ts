@@ -4,24 +4,14 @@ export type LavaSpeed = 'veryslow' | 'slow' | 'normal' | 'fast'
 // A single colour word: shorthand for that colour's default wax-in-liquid pair.
 export type LavaColourWord = 'orange' | 'purple' | 'green' | 'blue' | 'pink' | 'yellow'
 
-// A real lamp's wax-in-liquid pair, named `<wax>-<liquid>`. A `-clear` liquid
-// draws no background, so the terminal's own shows through.
-export type LavaPair =
-  | 'orange-violet'
-  | 'yellow-blue'
-  | 'green-blue'
-  | 'purple-blue'
-  | 'blue-blue'
-  | 'pink-pink'
-  | 'turquoise-violet'
-  | 'red-violet'
-  | 'yellow-pink'
-  | 'orange-yellow'
-  | 'white-red'
-  | 'orange-black'
-  | 'yellow-clear'
-  | 'green-clear'
-  | 'purple-clear'
+// Colours that can be the wax of a lamp, and the liquid it floats in (the same
+// colours, and `clear`, which has no colour of its own).
+export type LavaWaxColour = 'orange' | 'yellow' | 'green' | 'purple' | 'blue' | 'pink' | 'red' | 'turquoise' | 'white' | 'black' | 'violet'
+export type LavaLiquidColour = LavaWaxColour | 'clear'
+
+// A wax in a liquid, named `<wax>-<liquid>`: any wax colour with any liquid. A
+// `-clear` liquid draws no background, so the terminal's own shows through.
+export type LavaPair = `${LavaWaxColour}-${LavaLiquidColour}`
 
 // What `palette` may hold: a colour word (kept as typed, so options saved by an
 // older version stay valid) or a named pair.
